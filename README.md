@@ -37,7 +37,7 @@
 ## 🛠️ Tech Stack
 
 - **Frontend**: [Streamlit](https://streamlit.io/) (Python 기반 웹 프레임워크)
-- **AI Model**: **Google Gemini 2.0 Flash** (Thinking Mode, Multimodal, High-speed)
+- **AI Model**: **Google Gemini 3.0 Flash (Preview)** (Thinking Mode, Multimodal, High-speed)
 - **Database**: [Supabase](https://supabase.com/) (PostgreSQL + Vector Storage)
 - **Language**: Python 3.9+
 - **Key Libraries**: `google-genai`, `altair` (Visualization), `pypdf/python-docx` (File Parsing)
