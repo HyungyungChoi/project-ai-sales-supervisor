@@ -1,0 +1,6 @@
+streamlit
+pandas
+supabase
+google-generativeai
+altair
+python-dotenv

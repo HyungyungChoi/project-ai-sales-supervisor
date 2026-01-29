@@ -1,11 +1,12 @@
-# Streamlit secrets (절대 공개 금지)
-.streamlit/secrets.toml
-
-# Python cache & Environment
-__pycache__/
-*.py[cod]
-venv/
-.env
-
-# OS files
+# System
 .DS_Store
+venv/
+__pycache__/
+
+# Environment & Secrets
+.env
+.streamlit/secrets.toml
+secrets.toml
+
+# Logs
+*.log
