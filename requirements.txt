@@ -1,6 +1,6 @@
 streamlit
 pandas
 supabase
-google-generativeai
+google-genai
 altair
 python-dotenv
