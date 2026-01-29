@@ -1,7 +1,7 @@
 # 🤖 AI Sales Supervisor (AI 세일즈 코칭 슈퍼바이저)
 
 > **"주니어 상담원도 1년차 에이스처럼."**
-> Google Gemini 2.0의 멀티모달 기능과 RAG(검색 증강 생성) 기술을 활용한 실시간 세일즈 코칭 시스템입니다.
+> Google Gemini 3.0 Flash (Preview)의 멀티모달 기능과 RAG(검색 증강 생성) 기술을 활용한 실시간 세일즈 코칭 시스템입니다.
 
 ---
 
