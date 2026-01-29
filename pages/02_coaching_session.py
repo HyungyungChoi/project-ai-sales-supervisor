@@ -62,10 +62,18 @@ with tab_session:
         audio_bytes = None
         
         with tab_audio:
-            uploaded_file = st.file_uploader("녹음 파일 (mp3/wav)", type=["mp3", "wav"])
+            uploaded_file = st.file_uploader("녹음 파일 (mp3/wav/m4a)", type=["mp3", "wav", "m4a"])
+            
+            audio_mime = "audio/mp3" # default
             if uploaded_file:
+                # 확장자 기반 MIME 타입 추론
+                if uploaded_file.name.lower().endswith(".m4a"):
+                     audio_mime = "audio/mp4" # Gemini handles m4a as MP4 container
+                elif uploaded_file.name.lower().endswith(".wav"):
+                     audio_mime = "audio/wav"
+                     
                 audio_bytes = uploaded_file.read()
-                st.audio(uploaded_file, format="audio/mp3")
+                st.audio(uploaded_file, format=audio_mime)
 
         with tab_text:
             text_val = st.text_area("상담 스크립트", height=200, key="txt_in")
@@ -88,18 +96,24 @@ with tab_session:
                                 "summary": r["summary"] # Usage Context
                             })
                     
-                    # 1차 분석 수행 (with references)
+                    # [NEW] 카테고리 정보 로드 (설명 포함)
+                    detailed_categories = fetch_consultation_types(include_desc=True)
+
+                    # 1차 분석 수행 (with references & categories)
                     res = analyze_topic_and_traits(
                         script=script_input, 
                         audio_data=audio_bytes,
-                        ref_metadata=ref_meta_for_ai
+                        mime_type=audio_mime, # 전달
+                        ref_metadata=ref_meta_for_ai,
+                        categories=detailed_categories
                     )
                     
                     # 세션에 저장
                     st.session_state.temp_analysis = res
                     st.session_state.temp_source = {
                         "script": script_input,
-                        "audio": audio_bytes
+                        "audio": audio_bytes,
+                        "mime_type": audio_mime # Store MIME type
                     }
                     st.session_state.process_step = "extracted"
                     st.rerun()
@@ -130,14 +144,23 @@ with tab_session:
             # [수정] DB에서 동적으로 불러온 카테고리 사용
             active_types = fetch_consultation_types()
             
-            # 기존 분석 결과가 현재 active_types에 없으면 'general'로 fallback
-            default_topic = res.get("topic", "general")
-            if default_topic not in active_types:
-                default_topic = "general"
-                
-            c_topic = st.selectbox("상담 유형", active_types, 
+            # [수정] AI가 추천한 Top 3 Topics 활용
+            ai_topics = res.get("top_3_topics", [])
+            if isinstance(ai_topics, str): ai_topics = [ai_topics] # 하위호환
+            
+            # 1순위 추천값을 기본값으로 설정
+            default_topic = "general"
+            if ai_topics and ai_topics[0] in active_types:
+                default_topic = ai_topics[0]
+            
+            c_topic = st.selectbox("상담 유형 (1순위 추천 자동선택)", active_types, 
                                    index=active_types.index(default_topic) if default_topic in active_types else 0)
-            st.info(f"파악된 성향: {res.get('customer_traits')}")
+            
+            # 나머지 추천 표시
+            if len(ai_topics) > 1:
+                others = [t for t in ai_topics if t != c_topic and t in active_types]
+                if others:
+                    st.caption(f"🤖 AI의 다른 제안: {', '.join(others)}")
             
             # [NEW] 관련 참고 자료 (RAG) - AI 추천 반영
             st.divider()
@@ -211,6 +234,7 @@ with tab_session:
                 final_res = generate_coaching_feedback(
                     script=source["script"],
                     audio_data=source["audio"],
+                    mime_type=source.get("mime_type", "audio/mp3"), # MIME Type 전달
                     history=history,
                     guidelines=guidelines,
                     references=final_refs
@@ -300,11 +324,6 @@ with tab_session:
         st.markdown("### 💡 AI 피드백 상세")
         st.markdown(final_res.get("feedback"))
         
-        st.divider()
-        
-        st.divider()
-        
-        # 저장 버튼 (Unknown도 저장 가능하도록 수정됨)
         st.divider()
         
         # 저장 완료 메시지 및 새 상담 시작

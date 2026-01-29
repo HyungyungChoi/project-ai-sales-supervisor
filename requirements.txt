@@ -4,3 +4,5 @@ supabase
 google-genai
 altair
 python-dotenv
+pypdf
+python-docx

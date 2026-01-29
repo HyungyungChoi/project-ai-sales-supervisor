@@ -3,6 +3,7 @@ from google.genai import types
 import streamlit as st
 import json
 import base64
+import requests
 
 # 1. Gemini Client 설정
 def init_gemini():
@@ -55,19 +56,18 @@ def refine_guideline_with_ai(category, raw_input):
     except Exception as e:
         return f"AI 변환 실패: {e}"
 
-def generate_reference_usage_context(content):
+def generate_reference_usage_context(content, file_data=None, mime_type="application/pdf"):
     """
     참고자료의 '사용 상황(Context)'을 AI로 추출
+    (텍스트 또는 파일 기반)
     """
     if not client: return "AI Client Error"
 
     prompt = f"""
     이 참고자료가 상담 중 **언제 쓰여야 하는지**를 **가장 짧고 명확한 한 문장**으로 정의하세요. (토큰 절약 목적)
     구체적인 상황을 키워드 위주로 간결하게 표현하세요. (20자 내외 권장)
+    **주의: 글자 수(예: (19자))를 출력 결과에 포함하지 마세요.**
 
-    [자료 본문]
-    {content}
-    
     [출력 예시]
     - 단순 변심 환불 방어 시 (7일 경과)
     - 제품 하자 주장 대응 (증빙 없을 때)
@@ -77,26 +77,49 @@ def generate_reference_usage_context(content):
     사용 시점:
     """
     
+    contents = [prompt]
+    if file_data:
+        contents.append(types.Part.from_bytes(data=file_data, mime_type=mime_type))
+    elif content:
+        contents.append(f"[자료 본문]\n{content}")
+    else:
+        return "내용 없음"
+    
     try:
         response = client.models.generate_content(
             model=MODEL_ID,
-            contents=prompt,
+            contents=contents,
             config=config_high_thinking
         )
         return response.text.replace("사용 시점:", "").strip()
     except Exception as e:
-        return f"분석 실패: {content[:100]}..."
+        return f"분석 실패: {str(e)[:50]}..."
 
 # ==========================================
 # 🧠 기능 2: 상담 분석 & 코칭 (Consultant용)
 # ==========================================
 
-def analyze_topic_and_traits(script=None, audio_data=None, ref_metadata=[], mime_type="audio/mp3"):
+def analyze_topic_and_traits(script=None, audio_data=None, mime_type="audio/mp3", ref_metadata=[], categories=[]):
     """
-    [1차 분석] 주제, 고객 성향, 관련 참고자료 추천
-    - ref_metadata: [{"id":.., "title":.., "context":..}, ...]
+    [1차 분석] 주제 분류, 고객 성향, 고객 정보(이름/전화번호) 추출 + RAG 추천
+    Now capable of using dynamic categories with descriptions.
     """
-    if not client: return None
+    if not client: return {"topic": "general", "customer_traits": "unknown", "customer_info": {}, "summary": "AI Error"}
+
+    # 카테고리 정보 포맷팅
+    cat_text = ""
+    if categories:
+        cat_text = "[가능한 상담 유형 (Categories)]\n"
+        for c in categories:
+            # c가 dict면 description 사용, str이면 이름만 사용
+            if isinstance(c, dict):
+                desc = f": {c.get('description')}" if c.get('description') else ""
+                cat_text += f"- {c['name']}{desc}\n"
+            else:
+                cat_text += f"- {c}\n"
+    else:
+        # Fallback
+        cat_text = "환불(refund), 기술(tech), 문의(inquiry), 일반(general) 중 택1"
 
     # 참고자료 리스트 텍스트 화
     ref_list_txt = ""
@@ -108,7 +131,10 @@ def analyze_topic_and_traits(script=None, audio_data=None, ref_metadata=[], mime
 
     sys_instruction = f"""
     상담 내용을 분석해서 다음 5가지 정보를 JSON으로 추출하세요.
-    1. topic: 환불(refund), 기술(tech), 문의(inquiry), 일반(general) 중 택1
+    
+    1. top_3_topics: 아래 '가능한 상담 유형' 중 가장 적절한 순서대로 상위 1~3개를 리스트로 반환 (영문 코드명)
+    {cat_text}
+    
     2. customer_traits: 급함, 화남, 논리적 등 핵심 키워드
     3. customer_info: 대화 중 언급된 고객의 이름과 전화번호(또는 식별자). 없으면 null.
     4. summary: 상담 내용 한줄 요약
@@ -120,7 +146,7 @@ def analyze_topic_and_traits(script=None, audio_data=None, ref_metadata=[], mime
     
     [출력 포맷 - JSON Only]
     {{
-        "topic": "...", 
+        "top_3_topics": ["topic_A", "topic_B"], 
         "customer_traits": "...",
         "customer_info": {{
             "name": "홍길동" or null,
@@ -186,7 +212,15 @@ def generate_coaching_feedback(script=None, audio_data=None, history=[], guideli
     if references:
         ref_text = "[참고 문헌 (법률, 규정, 매뉴얼)]\n"
         for r in references:
-             ref_text += f"==== {r['title']} ====\n{r['content']}\n================\n"
+             # 파일이 있으면(PDF) 프롬프트 텍스트에서는 제외 (토큰 절약 및 중복 방지)
+             # 단, DOCX나 TXT는 파일 Part 지원이 안되므로 텍스트로 포함
+             f_url = r.get('file_url')
+             is_pdf = f_url and f_url.lower().endswith('.pdf')
+             
+             if not is_pdf:
+                ref_text += f"==== {r['title']} ====\n{r['content']}\n================\n"
+             else:
+                ref_text += f"==== {r['title']} ====\n(첨부된 PDF 파일 참조)\n================\n"
 
     prompt_text = f"""
     당신은 AI 세일즈 슈퍼바이저입니다. 
@@ -227,6 +261,27 @@ def generate_coaching_feedback(script=None, audio_data=None, history=[], guideli
     """
     
     contents = [prompt_text]
+    
+    # [NEW] PDF 파일 첨부 처리 (References)
+    if references:
+        for r in references:
+            f_url = r.get('file_url')
+            # 1. 파일이 있고 PDF인 경우 -> File Part 전송
+            if f_url and f_url.lower().endswith('.pdf'):
+                try:
+                    # 파일 다운로드 (Public URL or Signed URL needed. Assuming Public based on settings)
+                    rf = requests.get(f_url)
+                    if rf.status_code == 200:
+                        print(f"📎 PDF Reference Attached: {r['title']}")
+                        contents.append(types.Part.from_bytes(data=rf.content, mime_type="application/pdf"))
+                    else:
+                        print(f"⚠️ PDF Download Failed ({rf.status_code}): {f_url}")
+                        # 실패 시 텍스트로 폴백할지 여부 결정. 여기선 텍스트 content가 있다면 텍스트는 프롬프트에 이미 포함됨?
+                        # 아니오, 위 로직에서 ref_text 생성 시 file_url 있으면 제외할지 판단 필요.
+                        # 현재 로직: ref_text에 텍스트도 넣고, 파일도 넣으면 중복/토큰낭비 가능성.
+                        # -> "파일이 있으면 텍스트는 빼자"
+                except Exception as e:
+                    print(f"Error downloading ref file: {e}")
     
     if audio_data:
         contents.append(types.Part.from_bytes(data=audio_data, mime_type=mime_type))

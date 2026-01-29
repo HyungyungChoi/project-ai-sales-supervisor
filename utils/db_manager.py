@@ -57,6 +57,34 @@ def upload_audio_file(file_bytes, file_ext="mp3"):
         print(f"오디오 업로드 에러: {e}") 
         return None
 
+        return None
+
+def upload_reference_file(file_bytes, file_ext="pdf"):
+    """
+    Supabase Storage 'references' 버킷에 파일을 업로드하고 Public URL을 반환합니다.
+    """
+    try:
+        filename = f"{uuid.uuid4()}.{file_ext}"
+        bucket = "references"
+        
+        # Upload
+        # content-type 설정: pdf, docx 등
+        mime_type = "application/pdf"
+        if file_ext == "docx": mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif file_ext == "txt": mime_type = "text/plain"
+        
+        supabase.storage.from_(bucket).upload(
+            path=filename,
+            file=file_bytes,
+            file_options={"content-type": mime_type}
+        )
+        
+        public_url = supabase.storage.from_(bucket).get_public_url(filename)
+        return public_url
+    except Exception as e:
+        print(f"파일 업로드 에러: {e}") 
+        return None
+
 # ==========================================
 # 👤 사용자 인증 및 프로필 관리 (Auth & Profiles)
 # ==========================================
@@ -123,6 +151,10 @@ def add_new_guideline(category, raw_input, refined_content):
         "is_active": True
     }
     return supabase.table("guidelines").insert(data).execute()
+
+def update_guideline_content(guideline_id, new_content):
+    """가이드라인 내용을 수정합니다"""
+    return supabase.table("guidelines").update({"refined_content": new_content}).eq("id", guideline_id).execute()
 
 # ==========================================
 # 🎧 상담 코칭 및 고객 관리 (Coaching & CRM)
@@ -235,6 +267,12 @@ def update_user_role(user_id, is_admin):
     """
     supabase.table("profiles").update({"is_admin": is_admin}).eq("id", user_id).execute()
 
+def update_user_department(user_id, dept):
+    """
+    유저의 부서 정보를 업데이트합니다.
+    """
+    supabase.table("profiles").update({"department": dept}).eq("id", user_id).execute()
+
 def fetch_all_profiles():
     """관리자 페이지에서 상담원 목록을 보기 위해 모든 프로필을 가져옵니다."""
     return supabase.table("profiles").select("*").order("created_at").execute().data
@@ -281,18 +319,27 @@ def fetch_consultant_stats(user_id):
 # ⚙️ 상담 유형(Category) 관리 & 통계
 # ==========================================
 
-def fetch_consultation_types():
+def fetch_consultation_types(include_desc=False):
     """DB에 등록된 활성 상담 유형 목록을 가져옵니다."""
     try:
-        res = supabase.table("consultation_types").select("name").eq("is_active", True).execute()
-        return [r['name'] for r in res.data] if res.data else ["general"]
+        res = supabase.table("consultation_types").select("name, description").eq("is_active", True).execute()
+        if not res.data:
+            return ["refund", "tech", "inquiry", "general"] # Fallback
+            
+        if include_desc:
+            return res.data # [{'name': '...', 'description': '...'}, ...]
+        else:
+            return [r['name'] for r in res.data]
     except:
         return ["refund", "tech", "inquiry", "general"] # Fallback
 
-def add_consultation_type(name):
+def add_consultation_type(name, description=None):
     """새 상담 유형 추가"""
     try:
-        supabase.table("consultation_types").insert({"name": name}).execute()
+        data = {"name": name}
+        if description:
+            data["description"] = description
+        supabase.table("consultation_types").insert(data).execute()
         return True, "성공"
     except Exception as e:
         return False, str(e)
@@ -344,14 +391,15 @@ def fetch_references(category=None):
         print(f"참고자료 조회 실패: {e}")
         return []
 
-def add_reference(category, title, content, summary=None):
+def add_reference(category, title, content, summary=None, file_url=None):
     """새 참고자료를 추가합니다."""
     try:
         data = {
             "category": category,
             "title": title,
             "content": content,
-            "summary": summary if summary else content[:200]
+            "summary": summary if summary else content[:200],
+            "file_url": file_url
         }
         supabase.table("reference_materials").insert(data).execute()
         return True, "저장 성공"
